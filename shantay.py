@@ -4,7 +4,9 @@ import datetime
 import glob
 import os
 import subprocess
+import sys
 import tempfile
+from CoreFoundation import CFPreferencesCopyAppValue
 
 #gimme some vars
 how_far_back = 1
@@ -14,7 +16,7 @@ dir_of_logs = '/Users/abanks/Desktop/cashayScratch/Logs'                        
 #time jiggery-pokery
 now = str(datetime.datetime.today())[:-3]
 delta_object = datetime.timedelta(days=how_far_back)
-start_datetime = str(datetime.datetime.today() - delta_object)[:-3] # lops off UTC's milisecs
+start_datetime = str(datetime.datetime.today() - delta_object)[:-3] # lops off UTC's millisecs
 
 #data structures for parsing, now and later
 bandwidth_lines_list,filetype_lines_list,logged_bytes_from_cache,logged_bytes_from_apple=[],[],[],[]
@@ -37,6 +39,9 @@ for archived_log in bunch_of_bzips:
     finally:
         process_bz.close()
 opened_masterlog.close()
+
+more_recent_svc_hup = False
+
 #main loop to populate data structures 
 try:
     with open(os.path.join(dir_of_logs, 'Debug.log'), 'rU') as current, open(master_log, 'rU') as unzipped:
@@ -50,6 +55,8 @@ try:
                             filetype_lines_list.append(line.split())
 except IOError as e:
     print 'Operation failed: %s' % e.strerror
+    sys.exit(1)
+
 #normalize to GBs
 def normalize_gbs(mb_or_gb, val_to_operate_on):
     """take an index to check, and if MB, return applicable index divided by 1024"""
@@ -85,7 +92,7 @@ if len(logged_bytes_from_peers) > 1:
     if max(logged_bytes_from_peers) > 0.1:
         daily_total_from_peers = alice(logged_bytes_from_peers)
         daily_total_from_apple = daily_total_from_apple - daily_total_from_peers
-        peer_amount = 'Supplemented by %s from peers' % gen_mb_or_gb(daily_total_from_peers)
+        peer_amount = 'along with %s from peers' % gen_mb_or_gb(daily_total_from_peers)
 else:
     peer_amount = 'no peer servers detected'
 

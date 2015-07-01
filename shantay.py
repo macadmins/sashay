@@ -1,32 +1,98 @@
 #!/usr/bin/python
-import os, subprocess
-from time import strftime
+import bz2
+import datetime
+import glob
+import os
+import subprocess
+import tempfile
 
-today = strftime("%Y-%m-%d %H:%M")
-bandwidth_lines_list = []
-filetype_lines_list = []
+#gimme some vars
+how_far_back = 1
+# dir_of_logs='/Library/Server/Caching/Logs'
+dir_of_logs = '/Users/abanks/Desktop/cashayScratch/Logs'                        #debug
+
+#time jiggery-pokery
+now = str(datetime.datetime.today())[:-3]
+delta_object = datetime.timedelta(days=how_far_back)
+start_datetime = str(datetime.datetime.today() - delta_object)[:-3] # lops off UTC's milisecs
+
+#data structures for parsing, now and later
+bandwidth_lines_list,filetype_lines_list,logged_bytes_from_cache,logged_bytes_from_apple=[],[],[],[]
+logged_bytes_from_peers=[]
 excludes = ['egist', 'public', 'peers', 'Opened', 'EC', 'Bad']
-filetypes = ['ipa', 'epub', 'pkg']
-f = open('/Library/Server/Caching/Logs/Debug.log', 'rU')
-# f = open('/private/tmp/Debug.log', 'rU')
-for line in f:
-    if 'start:' in line:
-        bandwidth_lines_list.append(line.split())
-    elif not any(x in line for x in excludes):
-        if any(x in line for x in filetypes):
-            filetype_lines_list.append(line.split())
-f.close()
-logged_gb_returns = []
-logged_gb_origins = []
+filetypes = ['ipa', 'epub', 'pkg', 'zip']
+#setup tempfile 
+master_log = tempfile.mkstemp(suffix='.log',prefix='sashayTemp-')[1]
+print master_log                                                                #debug
+das_bzips = "".join([dir_of_logs, '/Debug-*'])
+bunch_of_bzips = glob.glob(das_bzips)
+opened_masterlog = open(master_log, 'w')
+#concat each unbz'd log to tempfile
+for archived_log in bunch_of_bzips:
+    try:
+        process_bz = bz2.BZ2File(archived_log)
+        opened_masterlog.write(process_bz.read())
+    except Exception as e:
+        raise e
+    finally:
+        process_bz.close()
+opened_masterlog.close()
+#main loop to populate data structures 
+try:
+    with open(os.path.join(dir_of_logs, 'Debug.log'), 'rU') as current, open(master_log, 'rU') as unzipped:
+        for f in current, unzipped:
+            for line in f:
+                if line[:23] > start_datetime:
+                    if 'start:' in line:
+                        bandwidth_lines_list.append(line.split())
+                    elif not any(x in line for x in excludes):
+                        if any(x in line for x in filetypes):
+                            filetype_lines_list.append(line.split())
+except IOError as e:
+    print 'Operation failed: %s' % e.strerror
+#normalize to GBs
+def normalize_gbs(mb_or_gb, val_to_operate_on):
+    """take an index to check, and if MB, return applicable index divided by 1024"""
+    if mb_or_gb == 'MB':
+        return float(float(val_to_operate_on) / 1024.0)
+    elif mb_or_gb != 'GB':
+        return 0.0 # if it's less than 1MB just shove in a placeholder float
+    else:
+        return float(val_to_operate_on)
+
+def alice(list_to_get_extremes):
+    """one pill makes you taller"""
+    return max(list_to_get_extremes) - min(list_to_get_extremes)
 
 for each in bandwidth_lines_list:
-    logged_gb_returns.append(float(each[5]))
-    logged_gb_origins.append(float(each[10]))
-daily_total_from_cache = max(logged_gb_returns) - min(logged_gb_returns)
-daily_total_from_apple = max(logged_gb_origins) - min(logged_gb_origins)
-message = ["Download requests served from cache: ", str(daily_total_from_cache * 1024), " MB", '\n',
-    "Amount streamed from Apple: ", str(daily_total_from_apple * 1024), " MB", '\n',
-    "Net bandwidth saved: ", str((daily_total_from_cache - daily_total_from_apple) * 1024), " MB"]
-# print message
-# print filetype_lines_list
-subprocess.call('/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data: Today" message "' + ' '.join(message) + '" <<<""', shell=True)
+    strip_parens = (each[15])[1:] # silly log line cleanup
+    logged_bytes_from_cache.append(normalize_gbs(each[6], each[5]))
+    logged_bytes_from_apple.append(normalize_gbs(each[16], strip_parens))
+    if not each[19] == '0':
+        logged_bytes_from_peers.append(normalize_gbs(each[20], each[19]))
+daily_total_from_cache = alice(logged_bytes_from_cache)
+daily_total_from_apple = alice(logged_bytes_from_apple)
+
+def gen_mb_or_gb(float):
+    """based on how big the results of a calc is, either display float and GBs
+       or multiply times 1024 and display in MBs"""
+    if float > 1.0:
+        return " ".join([str(round(float, 2)), 'GBs'])
+    else:
+        return " ".join([str(round(float * 1024), 2), 'MBs'])
+
+if len(logged_bytes_from_peers) > 1:
+    if max(logged_bytes_from_peers) > 0.1:
+        daily_total_from_peers = alice(logged_bytes_from_peers)
+        daily_total_from_apple = daily_total_from_apple - daily_total_from_peers
+        peer_amount = 'Supplemented by %s from peers' % gen_mb_or_gb(daily_total_from_peers)
+else:
+    peer_amount = 'no peer servers detected'
+
+#build message
+message = ["Download requests served from cache: ", gen_mb_or_gb(daily_total_from_cache), '\n',
+    "Amount streamed from Apple (", peer_amount, "): " , gen_mb_or_gb(daily_total_from_apple), '\n',
+    "Net bandwidth saved: ", gen_mb_or_gb(daily_total_from_cache - daily_total_from_apple)]
+print(' '.join(message))                                                        #debug
+print filetype_lines_list                                                       #debug
+# subprocess.call('/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data: Today" message "' + ' '.join(message) + '" <<<""', shell=True)

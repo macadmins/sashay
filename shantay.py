@@ -11,18 +11,18 @@ import sys
 import tempfile
 from CoreFoundation import CFPreferencesCopyAppValue
 
-# #sanity checking - since I'm going through the trouble of pure python bunzip'ing
-# plist_path = '/Applications/Server.app/Contents/Info.plist'
-# server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', plist_path)
-# if not server_app_version:
-#     print "Can't find Server.app, are you running this on your Mac server instance?"
-#     sys.exit(2)
-# elif float(server_app_version) < 4.1:
-#     print "Not Version 4.1(+) of Server.app"
-#     sys.exit(3)
-#
-# if os.geteuid() != 0:
-#     exit("For the final message send(only), this(currently) needs to be run with 'sudo'.")
+#sanity checks
+plist_path = '/Applications/Server.app/Contents/Info.plist'
+server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', plist_path)
+if not server_app_version:
+    print "Can't find Server.app, are you running this on your Mac server instance?"
+    sys.exit(2)
+elif float(server_app_version) < 4.1:
+    print "Not Version 4.1(+) of Server.app"
+    sys.exit(3)
+
+if os.geteuid() != 0:
+    exit("For the final message send(only), this(currently) needs to be run with 'sudo'.")
 
 def normalize_gbs(mb_or_gb, val_to_operate_on):
     """Used when calculating bandwidth. Takes an index to check, and if MB,
@@ -109,7 +109,7 @@ def separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_dateti
                     if any(x in logline_str for x in filetypes):
                         filetype_lines_list.append(logline_str.split())
     else:
-        new_start_datetime = ''
+        new_start_datetime = start_datetime
         for logline_str in our_range_logline_str_list:
             if logline_str[:23] > start_datetime:
                 if 'start:' in logline_str:
@@ -188,7 +188,7 @@ def parse_prods(prodlist, name):
 def main():
     p = optparse.OptionParser()
     p.set_usage("""Usage: %prog [options]""")
-    p.add_option('--from', '-f', dest='from_datetime', default=3,
+    p.add_option('--from', '-f', dest='from_datetime', default=2,
                  help="""(Integer) Number of days in the past to include in report.
                          Default is 24hrs from current timestamp""")
     p.add_option('--through', '-t', dest='to_datetime', default=str(datetime.datetime.today())[:-3],
@@ -209,7 +209,7 @@ def main():
                  help="""Report on total/unique zips (assuming for iOS firmware).""")
 
     options, arguments = p.parse_args()
-    dir_of_logs = '/Users/abanks/Desktop/cashayScratch/Logs'                        #debug
+    dir_of_logs = '/Library/Server/Caching/Logs'                        #modify for debug
     start_datetime = get_start(options.from_datetime)
     unbzipped_logs = join_bzipped_logs(dir_of_logs)
     (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime)
@@ -260,7 +260,9 @@ def main():
     message += final_filetypes
 
     print(' '.join(message))                                                        #debug
-    # subprocess.call('/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data: Today" message "' + ' '.join(message) + '" <<<""', shell=True)
+    final_msg_list = ['/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data:', new_start_datetime[:-4], 'through', options.to_datetime[:-4] + '"', 'message', '"' + ' '.join(message) + '"', '<<<""']
+    final_message = ' '.join(final_msg_list)
+    subprocess.call(final_message, shell=True)
 
 if __name__ == '__main__':
     main()

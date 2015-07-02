@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import bz2
+import collections
 import datetime
 import glob
 import optparse
@@ -37,12 +38,13 @@ def alice(list_to_get_extremes):
     """One pill makes you taller... calculates bandwidth used delta"""
     return max(list_to_get_extremes) - min(list_to_get_extremes)
 
-def gen_mb_or_gb(float):
-    """Shows bandwidth in MBs if less than 1GB"""
-    if float > 1.0:
-        return " ".join([str(round(float, 2)), 'GBs'])
+def gen_mb_or_gb(floaty):
+    """Shows bandwidth in MBs if less than 1GB. Returns string"""
+    if floaty > 1.0:
+        return " ".join([str(round(floaty, 2)), 'GBs'])
     else:
-        return " ".join([str(round(float * 1024), 2), 'MBs'])
+        megabyted_float = floaty * 1024
+        return " ".join([str(round(megabyted_float, 2)), 'MBs'])
 
 #start taking vars from main()
 def get_start(from_datetime):
@@ -107,6 +109,7 @@ def separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_dateti
                     if any(x in logline_str for x in filetypes):
                         filetype_lines_list.append(logline_str.split())
     else:
+        new_start_datetime = ''
         for logline_str in our_range_logline_str_list:
             if logline_str[:23] > start_datetime:
                 if 'start:' in logline_str:
@@ -149,71 +152,113 @@ def get_device_stats(filetype_lines_list):
         if filelog[5].startswith('172'):
             strip_port = (filelog[5])[:-6]
             IPLog.append(strip_port)
-            if filelog[10].startswith('Darwin/12'):
+            if filelog[10].startswith('Darwin/12'):#User agent-based Mac OS detection
                 OSLog.append('Mac OS 10.8.x')
             elif filelog[10].startswith('Darwin/13'):
                 OSLog.append('Mac OS 10.9.x')
             elif filelog[10].startswith('Darwin/14'):
                 OSLog.append('Mac OS 10.10.x')
             else:
-                OSLog.append(filelog[7])
-            if len(filelog) == 15:
+                OSLog.append(filelog[7])#Whereas iOS just logs without a fuss
+            if len(filelog) == 15:# For some reason you only seem to get Mac models when logline has 15 sections
                 ModelLog.append(filelog[12])
             elif filelog[7] == '(unknown':
                 ModelLog.append('Unknown Mac')
             else:
-                ModelLog.append(filelog[8])
-            if (filelog[12]).endswith('ipa'):
-                ipas.append(filelog[12])
-            elif (filelog[12]).endswith('epub'):
-                epubs.append(filelog[12])
-            elif (filelog[12]).endswith('pkg'):
-                pkgs.append(filelog[12])
-            elif (filelog[12]).endswith('zip'):
-                zips.append(filelog[12])
+                ModelLog.append((filelog[8])[6:])#...whereas iOS just logs without a fuss(noticing a pattern?)
+            if (filelog[-1]).endswith('ipa'):
+                ipas.append(filelog[-1])
+            elif (filelog[-1]).endswith('epub'):
+                epubs.append(filelog[-1])
+            elif (filelog[-1]).endswith('pkg'):
+                pkgs.append(filelog[-1])
+            elif (filelog[-1]).endswith('zip'):
+                zips.append(filelog[-1])
     return IPLog,OSLog,ModelLog,ipas,epubs,pkgs,zips
+
+def parse_prods(prodlist, name):
+    """Returns a string with prod reporting format, or empty string if no products found"""
+    if len(prodlist) > 0:
+        sum_of_prods = len(prodlist)
+        individ_prods = len(set(prodlist))
+        return '%d different %s were requested %d times, \n' % (individ_prods, name, sum_of_prods)
+    else:
+        return ''
 
 def main():
     p = optparse.OptionParser()
     p.set_usage("""Usage: %prog [options]""")
-    p.add_option('--from', '-f', dest='from_datetime', default=1,
+    p.add_option('--from', '-f', dest='from_datetime', default=3,
                  help="""(Integer) Number of days in the past to include in report.
                          Default is 24hrs from current timestamp""")
     p.add_option('--through', '-t', dest='to_datetime', default=str(datetime.datetime.today())[:-3],
                  help="""End of date range to report, in format '2015-06-30 12:00:00.000'""")
-    p.add_option('--modelvers', '-m', dest='modelvers',
-                 help="""Report on iOS device versions and Macs (if logged).""")
-    p.add_option('--osrevs', '-r', dest='os_revisions',
-                 help="""Report on iOS and Macs OS versions.""")
-    p.add_option('--net', '-n', dest='network_ips',
+    p.add_option('--net', '-n', dest='network_ips', default=True,
                  help="""Report on total/unique ips and subnets.""")
-    p.add_option('--ipa', '-i', dest='ipas',
+    p.add_option('--modelvers', '-m', dest='modelvers', default=True,
+                 help="""Report on iOS device versions and Macs (if logged).""")
+    p.add_option('--osrevs', '-r', dest='os_revisions', default=True,
+                 help="""Report on iOS and Macs OS versions.""")
+    p.add_option('--ipa', '-i', dest='ipas', default=True,
                  help="""Report on total/unique ipas.""")
-    p.add_option('--epub', '-e', dest='epubs',
+    p.add_option('--epub', '-e', dest='epubs', default=True,
                  help="""Report on total/unique epubs.""")
-    p.add_option('--pkg', '-p', dest='pkgs',
+    p.add_option('--pkg', '-p', dest='pkgs', default=True,
                  help="""Report on total/unique pkgs.""")
-    p.add_option('--zip', '-z', dest='zips',
+    p.add_option('--zip', '-z', dest='zips', default=True,
                  help="""Report on total/unique zips (assuming for iOS firmware).""")
 
     options, arguments = p.parse_args()
     dir_of_logs = '/Users/abanks/Desktop/cashayScratch/Logs'                        #debug
-    to_datetime = ''
-    start_datetime = get_start(from_datetime)
+    start_datetime = get_start(options.from_datetime)
     unbzipped_logs = join_bzipped_logs(dir_of_logs)
     (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime)
     (daily_total_from_cache, daily_total_from_apple, peer_amount) = parse_bandwidth(bandwidth_lines_list)
     (IPLog,OSLog,ModelLog,ipas,epubs,pkgs,zips) = get_device_stats(filetype_lines_list)
 
     #build message
-    message = ["Download requests served from cache: ", gen_mb_or_gb(daily_total_from_cache), '\n',
-        "Amount streamed from Apple (", peer_amount, "): " , gen_mb_or_gb(daily_total_from_apple), '\n',
-        "(Potential) Net bandwidth saved (items could have been cached previously): ",
+    message = ["Download requests served from cache:", gen_mb_or_gb(daily_total_from_cache), '\n',
+        "Amount streamed from Apple (",peer_amount,"):" , gen_mb_or_gb(daily_total_from_apple), '\n',
+        "(Potential) Net bandwidth saved (items could have been cached previously):",
         gen_mb_or_gb(daily_total_from_cache - daily_total_from_apple), '\n', ""]
     if more_recent_svc_hup:
-        disclaimer = ['\n', "  * NOTE: Stats are only gathered from last time service was restarted, ", new_start_datetime]
-        message += disclaimer
-    
+        disclaimer1 = ['\n', "  * NOTE: Stats are only displayed from the last caching service restart,", new_start_datetime, '\n']
+        message += disclaimer1
+    if options.modelvers:
+        if 'Unknown Mac' in ModelLog:
+            disclaimer2 = 'devices (minus some unspecified Macs)'
+        else:
+            disclaimer2 = 'devices'
+        sum_of_models = len(ModelLog)
+        individs = len(set(ModelLog))
+        counter=collections.Counter(ModelLog)
+        model_tally = ['\n', 'The 5 most frequently seen devices(followed by their count) were:', '\n\t', str(counter.most_common(5)),
+            '\n\n', 'The server was accessed', str(sum_of_models), 'times, from', str(individs), 'unique', disclaimer2]
+        message += model_tally
+    if options.network_ips:
+        subnet_list = []
+        for addy in IPLog:
+            just_sub = re.search('(\d{1,3}\.){2}\d{1,3}', addy)
+            subnet_list.append(just_sub.group())
+        counter=collections.Counter(subnet_list)
+        ip_tally = ['\n', "IP ranges that devices most frequently accessed this server from were:", '\n\t', str(counter.most_common(5)), '\n']
+        message += ip_tally
+    if options.os_revisions:
+        individ_osen = len(set(OSLog))
+        counter=collections.Counter(OSLog)
+        os_tally = ['\n', 'Of the', str(individ_osen), 'different OS versions seen across all devices, the 5 most frequent were:', '\n\t', str(counter.most_common(5)), '\n\n']
+        message += os_tally
+    final_filetypes = []
+    if options.ipas:
+        final_filetypes.append(parse_prods(ipas, 'iPhone Applications'))
+    if options.epubs:
+        final_filetypes.append(parse_prods(epubs, 'iBooks'))
+    if options.pkgs:
+        final_filetypes.append(parse_prods(pkgs, 'Mac Applications and/or Updates'))
+    if options.zips:
+        final_filetypes.append(parse_prods(zips, 'iOS Updates (and other zip archives)'))
+    message += final_filetypes
+
     print(' '.join(message))                                                        #debug
     # subprocess.call('/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data: Today" message "' + ' '.join(message) + '" <<<""', shell=True)
 

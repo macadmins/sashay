@@ -45,9 +45,9 @@ def gen_mb_or_gb(float):
         return " ".join([str(round(float * 1024), 2), 'MBs'])
 
 #start taking vars from main()
-def get_start(how_far_back):
-    """Calc reporting period datetimes, returns start datetime as string"""
-    delta_object = datetime.timedelta(days=how_far_back)
+def get_start(from_datetime):
+    """Calc start of reporting period datetime, returns as string"""
+    delta_object = datetime.timedelta(days=from_datetime)
     start_datetime = str(datetime.datetime.today() - delta_object)[:-3] # lops off UTC's millisecs
     return start_datetime
 def join_bzipped_logs(dir_of_logs):
@@ -176,10 +176,10 @@ def get_device_stats(filetype_lines_list):
 def main():
     p = optparse.OptionParser()
     p.set_usage("""Usage: %prog [options]""")
-    p.add_option('--from', '-f', dest='from_datetime',
+    p.add_option('--from', '-f', dest='from_datetime', default=1,
                  help="""(Integer) Number of days in the past to include in report.
                          Default is 24hrs from current timestamp""")
-    p.add_option('--through', '-t', dest='to_datetime',
+    p.add_option('--through', '-t', dest='to_datetime', default=str(datetime.datetime.today())[:-3],
                  help="""End of date range to report, in format '2015-06-30 12:00:00.000'""")
     p.add_option('--modelvers', '-m', dest='modelvers',
                  help="""Report on iOS device versions and Macs (if logged).""")
@@ -196,18 +196,12 @@ def main():
     p.add_option('--zip', '-z', dest='zips',
                  help="""Report on total/unique zips (assuming for iOS firmware).""")
 
-    # options, arguments = p.parse_args()
-    # if not (options.runOnce or options.runEvery):
-    #     print "Please choose a frequency and the path to a folder containing (1 or more) scripts"
-    #     p.print_help()
-    # dir_of_logs='/Library/Server/Caching/Logs'
+    options, arguments = p.parse_args()
     dir_of_logs = '/Users/abanks/Desktop/cashayScratch/Logs'                        #debug
     to_datetime = ''
-    start_datetime = get_start(3)
+    start_datetime = get_start(from_datetime)
     unbzipped_logs = join_bzipped_logs(dir_of_logs)
-    if not to_datetime:
-        to_datetime = str(datetime.datetime.today())[:-3]
-    (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_datetime, to_datetime)
+    (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime)
     (daily_total_from_cache, daily_total_from_apple, peer_amount) = parse_bandwidth(bandwidth_lines_list)
     (IPLog,OSLog,ModelLog,ipas,epubs,pkgs,zips) = get_device_stats(filetype_lines_list)
 
@@ -219,9 +213,8 @@ def main():
     if more_recent_svc_hup:
         disclaimer = ['\n', "  * NOTE: Stats are only gathered from last time service was restarted, ", new_start_datetime]
         message += disclaimer
+    
     print(' '.join(message))                                                        #debug
-    print OSLog + ModelLog                                                          #debug
-    print set(IPLog)
     # subprocess.call('/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data: Today" message "' + ' '.join(message) + '" <<<""', shell=True)
 
 if __name__ == '__main__':

@@ -11,7 +11,7 @@ import sys
 import tempfile
 from CoreFoundation import CFPreferencesCopyAppValue
 
-#sanity checks
+#sanity checking - since I'm going through the trouble of pure python bunzip'ing
 plist_path = '/Applications/Server.app/Contents/Info.plist'
 server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', plist_path)
 if not server_app_version:
@@ -49,7 +49,7 @@ def gen_mb_or_gb(floaty):
 #start taking vars from main()
 def get_start(from_datetime):
     """Calc start of reporting period datetime, returns as string"""
-    delta_object = datetime.timedelta(days=from_datetime)
+    delta_object = datetime.timedelta(days=int(from_datetime))
     start_datetime = str(datetime.datetime.today() - delta_object)[:-3] # lops off UTC's millisecs
     return start_datetime
 def join_bzipped_logs(dir_of_logs):
@@ -185,10 +185,25 @@ def parse_prods(prodlist, name):
     else:
         return ''
 
+def report_rounder(key_total):
+    """takes the total number of 'keyed' items and returns an int to round displayed results to"""
+    if key_total > 10:
+        if key_total < 15:
+            return 10
+        elif key_total < 20:
+            return 15
+        elif key_total < 25:
+            return 20
+        elif key_total >= 25:
+            return 25
+    else:
+        return key_total
+
+
 def main():
     p = optparse.OptionParser()
     p.set_usage("""Usage: %prog [options]""")
-    p.add_option('--from', '-f', dest='from_datetime', default=2,
+    p.add_option('--from', '-f', dest='from_datetime', default=1,
                  help="""(Integer) Number of days in the past to include in report.
                          Default is 24hrs from current timestamp""")
     p.add_option('--through', '-t', dest='to_datetime', default=str(datetime.datetime.today())[:-3],
@@ -207,9 +222,11 @@ def main():
                  help="""Report on total/unique pkgs.""")
     p.add_option('--zip', '-z', dest='zips', default=True,
                  help="""Report on total/unique zips (assuming for iOS firmware).""")
+    p.add_option('--subject', '-s', dest='subject_prefix', default='Daily',
+                 help="""Adds prefix to message, e.g. for denoting arbitrary date ranges, 'daily/weekly/monthly'.""")
 
     options, arguments = p.parse_args()
-    dir_of_logs = '/Library/Server/Caching/Logs'                        #modify for debug
+    dir_of_logs = '/Library/Server/Caching/Logs'                        #debug
     start_datetime = get_start(options.from_datetime)
     unbzipped_logs = join_bzipped_logs(dir_of_logs)
     (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime)
@@ -219,34 +236,36 @@ def main():
     #build message
     message = ["Download requests served from cache:", gen_mb_or_gb(daily_total_from_cache), '\n',
         "Amount streamed from Apple (",peer_amount,"):" , gen_mb_or_gb(daily_total_from_apple), '\n',
-        "(Potential) Net bandwidth saved (items could have been cached previously):",
+        "(Potential) Net bandwidth saved:",
         gen_mb_or_gb(daily_total_from_cache - daily_total_from_apple), '\n', ""]
     if more_recent_svc_hup:
         disclaimer1 = ['\n', "  * NOTE: Stats are only displayed from the last caching service restart,", new_start_datetime, '\n']
         message += disclaimer1
     if options.modelvers:
         if 'Unknown Mac' in ModelLog:
-            disclaimer2 = 'devices (minus some unspecified Macs)'
-        else:
-            disclaimer2 = 'devices'
+            disclaimer2 = '(Unique devices above do not include some unspecified Macs)'
         sum_of_models = len(ModelLog)
         individs = len(set(ModelLog))
+        key_total1 = report_rounder(individs)
         counter=collections.Counter(ModelLog)
-        model_tally = ['\n', 'The 5 most frequently seen devices(followed by their count) were:', '\n\t', str(counter.most_common(5)),
-            '\n\n', 'The server was accessed', str(sum_of_models), 'times, from', str(individs), 'unique', disclaimer2]
+        model_tally = ['\n', 'The', str(key_total1), 'most frequently seen types of devices (of', str(individs), 'unique devices in total, followed by their count) were:', '\n\t', str(counter.most_common(key_total1)),
+            '\n', 'The server was accessed by those devices', str(sum_of_models), 'times,', disclaimer2]
         message += model_tally
     if options.network_ips:
         subnet_list = []
         for addy in IPLog:
             just_sub = re.search('(\d{1,3}\.){2}\d{1,3}', addy)
             subnet_list.append(just_sub.group())
+        individ_subs = len(set(subnet_list))
+        key_total2 = report_rounder(individ_subs)
         counter=collections.Counter(subnet_list)
-        ip_tally = ['\n', "IP ranges that devices most frequently accessed this server from were:", '\n\t', str(counter.most_common(5)), '\n']
+        ip_tally = ['\n', "IP ranges that devices most frequently accessed this server from were:", '\n\t', str(counter.most_common(key_total2)), '\n']
         message += ip_tally
     if options.os_revisions:
         individ_osen = len(set(OSLog))
+        key_total3 = report_rounder(individ_osen)
         counter=collections.Counter(OSLog)
-        os_tally = ['\n', 'Of the', str(individ_osen), 'different OS versions seen across all devices, the 5 most frequent were:', '\n\t', str(counter.most_common(5)), '\n\n']
+        os_tally = ['\n', 'Of the', str(individ_osen), 'different OS versions seen across all devices, the', str(key_total3), 'most frequent were:', '\n\t', str(counter.most_common(key_total3)), '\n\n']
         message += os_tally
     final_filetypes = []
     if options.ipas:
@@ -259,8 +278,11 @@ def main():
         final_filetypes.append(parse_prods(zips, 'iOS Updates (and other zip archives)'))
     message += final_filetypes
 
+    if options.subject_prefix:
+        message.insert(0, options.subject_prefix) 
+
     print(' '.join(message))                                                        #debug
-    final_msg_list = ['/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "Caching Server Data:', new_start_datetime[:-4], 'through', options.to_datetime[:-4] + '"', 'message', '"' + ' '.join(message) + '"', '<<<""']
+    final_msg_list = ['/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "', options.subject_prefix, 'Caching Server Data:', new_start_datetime[:-4], 'through', options.to_datetime[:-4] + '"', 'message', '"' + ' '.join(message) + '"', '<<<""']
     final_message = ' '.join(final_msg_list)
     subprocess.call(final_message, shell=True)
 

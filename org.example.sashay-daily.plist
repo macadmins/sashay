@@ -3,11 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>org.example.sashay</string>
+	<string>org.example.sashay-daily</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>python</string>
 		<string>/usr/local/bin/sashay.py</string>
+		<string>-s</string>
+		<string>'Daily'</string>
 	</array>
 	<key>StartCalendarInterval</key>
 	<dict>

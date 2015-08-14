@@ -20,6 +20,18 @@ if not server_app_version:
 elif float(server_app_version) < 4.1:
     print "Not Version 4.1(+) of Server.app"
     sys.exit(3)
+else:
+    PREF_PATH = '/Library/Server/Caching/Config/Config.plist'
+    try:
+        LOGIDENTITYPREF = CFPreferencesCopyAppValue('LogClientIdentity', PREF_PATH)
+        if LOGIDENTITYPREF == True:
+            pass
+        else:
+            print """This will be a very spare/boring report if you don't run this command:
+                  sudo serveradmin settings caching:LogClientIdentity = true"""
+    except Exception as e:
+        raise e
+
 
 if os.geteuid() != 0:
     exit("For the final message send(only), this(currently) needs to be run with 'sudo'.")

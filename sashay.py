@@ -254,14 +254,14 @@ def main():
         disclaimer1 = ['\n', "  * NOTE: Stats are only displayed from the last caching service restart,", new_start_datetime, '\n']
         message += disclaimer1
     if options.modelvers:
-        if 'Unknown Mac' in ModelLog:
-            disclaimer2 = '(Unique devices above do not include some unspecified Macs)'
         sum_of_models = len(ModelLog)
         individs = len(set(ModelLog))
         key_total1 = report_rounder(individs)
         counter=collections.Counter(ModelLog)
         model_tally = ['\n', 'The', str(key_total1), 'most frequently seen types of devices (of', str(individs), 'unique devices in total, followed by their count) were:', '\n\t', str(counter.most_common(key_total1)),
-            '\n', 'The server was accessed by those devices', str(sum_of_models), 'times,', disclaimer2]
+            '\n', 'The server was accessed by those devices', str(sum_of_models), 'times,']
+        if 'Unknown Mac' in ModelLog:
+            model_tally.append('(Unique devices above do not include some unspecified Macs)')
         message += model_tally
     if options.network_ips:
         subnet_list = []

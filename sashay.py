@@ -17,7 +17,7 @@ server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', pli
 if not server_app_version:
     print "Can't find Server.app, are you running this on your Mac server instance?"
     sys.exit(2)
-elif float(server_app_version) < 4.1:
+elif server_app_version < 4.1:
     print "Not Version 4.1(+) of Server.app"
     sys.exit(3)
 else:

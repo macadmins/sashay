@@ -14,7 +14,7 @@ from CoreFoundation import CFPreferencesCopyAppValue
 
 # Variables
 #sanity checking - since I'm going through the trouble of pure python bunzip'ing
-config_plist = '/Library/Server/Caching/Config/Config.plist'
+config_plist = '/Library/Server/Caching/Config/Config'
 info_plist = '/Applications/Server.app/Contents/Info.plist'
 server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', info_plist)
 

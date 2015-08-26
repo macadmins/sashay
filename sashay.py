@@ -6,35 +6,52 @@ import glob
 import optparse
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 from CoreFoundation import CFPreferencesCopyAppValue
 
+# Variables
 #sanity checking - since I'm going through the trouble of pure python bunzip'ing
-plist_path = '/Applications/Server.app/Contents/Info.plist'
-server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', plist_path)
+config_plist = '/Library/Server/Caching/Config/Config.plist'
+info_plist = '/Applications/Server.app/Contents/Info.plist'
+server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', info_plist)
+
+# Pretty colored text
+def colored(text, color=None):
+    if not os.getenv('ANSI_COLORS_DISABLED'):
+        fmt_str = '\033[%dm'
+        reset = '\033[0m'
+        colors = {
+            'red': 31,
+            'green': 32,
+            'yellow': 33,
+            'blue': 34,
+        }
+        if color is not None:
+            text = fmt_str % (colors[color]) + text + reset
+    return text
+
 if not server_app_version:
-    print "Can't find Server.app, are you running this on your Mac server instance?"
+    print colored('Cant find Server.app, are you running this on your Mac server instance?', 'red')
     sys.exit(2)
 elif server_app_version < 4.1:
-    print "Not Version 4.1(+) of Server.app"
+    print colored('Not Version 4.1(+) of Server.app', 'red')
     sys.exit(3)
 else:
-    PREF_PATH = '/Library/Server/Caching/Config/Config.plist'
     try:
-        LOGIDENTITYPREF = CFPreferencesCopyAppValue('LogClientIdentity', PREF_PATH)
+        LOGIDENTITYPREF = CFPreferencesCopyAppValue('LogClientIdentity', config_plist)
         if LOGIDENTITYPREF == True:
             pass
         else:
-            print """This will be a very spare/boring report if you don't run this command:
-                  sudo serveradmin settings caching:LogClientIdentity = true"""
+            print colored('This will be a very boring report if you dont run this command:', 'yellow')
+            print colored('sudo serveradmin settings caching:LogClientIdentity = true', 'blue')
     except Exception as e:
         raise e
 
-
 if os.geteuid() != 0:
-    exit("For the final message send(only), this(currently) needs to be run with 'sudo'.")
+    print colored('sudo is currently required to send the final alert message.', 'red')
 
 def normalize_gbs(mb_or_gb, val_to_operate_on):
     """Used when calculating bandwidth. Takes an index to check, and if MB,
@@ -64,13 +81,14 @@ def get_start(from_datetime):
     delta_object = datetime.timedelta(days=int(from_datetime))
     start_datetime = str(datetime.datetime.today() - delta_object)[:-3] # lops off UTC's millisecs
     return start_datetime
-def join_bzipped_logs(dir_of_logs):
+
+def join_bzipped_logs(tmp_dir_of_logs):
     """Creates tempfile, wildcard searches for all archive logs, then uses bz2 module
        to unpack and append them all to the tempfile. Returns file(list of strings) once populated"""
     #setup tempfile 
     unbzipped_logs = tempfile.mkstemp(suffix='.log',prefix='sashayTemp-')[1]
     # print unbzipped_logs                                                                #debug
-    das_bzips = "".join([dir_of_logs, '/Debug-*'])
+    das_bzips = "".join([tmp_dir_of_logs, '/Debug-*'])
     bunch_of_bzips = glob.glob(das_bzips)
     opened_masterlog = open(unbzipped_logs, 'w')
     #concat each unbz'd log to tempfile
@@ -160,8 +178,10 @@ def get_device_stats(filetype_lines_list):
 # ['2015-06-30', '12:32:19.554', '#6d3LgXpVcHAU', 'Request', 'from', '172.18.20.102:52880', '[Software%20Update', '(unknown', 'version)', 'CFNetwork/720.3.13', 'Darwin/14.3.0', '(x86_64)]', 'for', 'http://swcdn.apple.com/content/downloads/58/34/031-25780/u1bqpe4ggzdp86utj2esnxfj4xq5izwwri/FirmwareUpdate.pkg']
 # ['2015-06-30', '14:09:00.230', '#sNn+egdFxN7m', 'Request', 'from', '172.18.81.204:60025', '[Software%20Update', '(unknown', 'version)', 'CFNetwork/596.6.3', 'Darwin/12.5.0', '(x86_64)', '(MacBookAir6%2C2)]', 'for', 'http://swcdn.apple.com/content/downloads/15/59/031-21808/qylh17vrdgnipjibo2avj3nbw8y2pzeito/Safari6.2.7MountainLion.pkg']
     IPLog,OSLog,ModelLog,ipas,epubs,pkgs,zips=[],[],[],[],[],[],[]
+    server_ip = socket.gethostbyname(socket.getfqdn())
+    log_ip = server_ip.split(".")[0]
     for filelog in filetype_lines_list:
-        if filelog[5].startswith('172'):
+        if filelog[5].startswith(log_ip):
             strip_port = (filelog[5])[:-6]
             IPLog.append(strip_port)
             if filelog[10].startswith('Darwin/12'):#User agent-based Mac OS detection
@@ -239,8 +259,10 @@ def main():
 
     options, arguments = p.parse_args()
     dir_of_logs = '/Library/Server/Caching/Logs'                        #debug
+    today = 'SashayTemp-' + str(datetime.date.today()) + '-'
+    tmp_dir_of_logs = tempfile.mkdtemp(prefix=today, dir='/private/tmp')
     start_datetime = get_start(options.from_datetime)
-    unbzipped_logs = join_bzipped_logs(dir_of_logs)
+    unbzipped_logs = join_bzipped_logs(tmp_dir_of_logs)
     (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_out_range_and_build_lists(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime)
     (daily_total_from_cache, daily_total_from_apple, peer_amount) = parse_bandwidth(bandwidth_lines_list)
     (IPLog,OSLog,ModelLog,ipas,epubs,pkgs,zips) = get_device_stats(filetype_lines_list)
@@ -297,6 +319,8 @@ def main():
     final_msg_list = ['/Applications/Server.app/Contents/ServerRoot/usr/sbin/server postAlert CustomAlert Common subject "', options.subject_prefix, 'Caching Server Data:', new_start_datetime[:-4], 'through', options.to_datetime[:-4] + '"', 'message', '"' + ' '.join(message) + '"', '<<<""']
     final_message = ' '.join(final_msg_list)
     subprocess.call(final_message, shell=True)
+    # Cleanup
+    os.rmdir(tmp_dir_of_logs)
 
 if __name__ == '__main__':
     main()

@@ -46,7 +46,7 @@ else:
             pass
         else:
             print colored('This will be a very boring report if you dont run this command:', 'yellow')
-            print colored('sudo serveradmin settings caching:LogClientIdentity = true', 'blue')
+            print colored('sudo serveradmin settings caching:LogClientIdentity = 1', 'blue')
     except Exception as e:
         raise e
 

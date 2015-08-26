@@ -28,7 +28,7 @@ else:
             pass
         else:
             print """This will be a very spare/boring report if you don't run this command:
-                  sudo serveradmin settings caching:LogClientIdentity = true"""
+                  sudo serveradmin settings caching:LogClientIdentity = 1"""
     except Exception as e:
         raise e
 

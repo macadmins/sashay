@@ -24,9 +24,7 @@ else:
     PREF_PATH = '/Library/Server/Caching/Config/Config.plist'
     try:
         LOGIDENTITYPREF = CFPreferencesCopyAppValue('LogClientIdentity', PREF_PATH)
-        if LOGIDENTITYPREF == True:
-            pass
-        else:
+        if not LOGIDENTITYPREF == 'true':
             print """This will be a very spare/boring report if you don't run this command:
                   sudo serveradmin settings caching:LogClientIdentity = 1"""
     except Exception as e:
@@ -69,7 +67,6 @@ def join_bzipped_logs(dir_of_logs):
        to unpack and append them all to the tempfile. Returns file(list of strings) once populated"""
     #setup tempfile 
     unbzipped_logs = tempfile.mkstemp(suffix='.log',prefix='sashayTemp-')[1]
-    # print unbzipped_logs                                                                #debug
     das_bzips = "".join([dir_of_logs, '/Debug-*'])
     bunch_of_bzips = glob.glob(das_bzips)
     opened_masterlog = open(unbzipped_logs, 'w')
@@ -161,7 +158,7 @@ def get_device_stats(filetype_lines_list):
 # ['2015-06-30', '14:09:00.230', '#sNn+egdFxN7m', 'Request', 'from', '172.18.81.204:60025', '[Software%20Update', '(unknown', 'version)', 'CFNetwork/596.6.3', 'Darwin/12.5.0', '(x86_64)', '(MacBookAir6%2C2)]', 'for', 'http://swcdn.apple.com/content/downloads/15/59/031-21808/qylh17vrdgnipjibo2avj3nbw8y2pzeito/Safari6.2.7MountainLion.pkg']
     IPLog,OSLog,ModelLog,ipas,epubs,pkgs,zips=[],[],[],[],[],[],[]
     for filelog in filetype_lines_list:
-        if filelog[5].startswith('172'):
+        if filelog[5].startswith('172') or filelog[5].startswith('192') or filelog[5].startswith('10.'):
             strip_port = (filelog[5])[:-6]
             IPLog.append(strip_port)
             if filelog[10].startswith('Darwin/12'):#User agent-based Mac OS detection
@@ -173,7 +170,10 @@ def get_device_stats(filetype_lines_list):
             else:
                 OSLog.append(filelog[7])#Whereas iOS just logs without a fuss
             if len(filelog) == 15:# For some reason you only seem to get Mac models when logline has 15 sections
-                ModelLog.append(filelog[12])
+                if filelog[12].startswith('dt:'):
+                    ModelLog.append((filelog[8])[6:])
+                else:
+                    ModelLog.append(filelog[12])
             elif filelog[7] == '(unknown':
                 ModelLog.append('Unknown Mac')
             else:

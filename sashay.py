@@ -19,6 +19,20 @@ from CoreFoundation import CFPreferencesCopyAppValue
 
 def sanities():
     """preflight checks to ensure compat., skipped if run in dev mode"""
+    pref_path = '/Library/Server/Caching/Config/Config.plist'
+    try:
+        logidentitypref = CFPreferencesCopyAppValue('LogClientIdentity', pref_path)
+        if not logidentitypref == 'true':
+            print """This will be a very spare/boring report if you don't run this command:
+                  sudo serveradmin settings caching:LogClientIdentity = 1"""
+    except Exception as e:
+        raise e
+    if os.geteuid() != 0:
+        exit("For the final message send(only), this(currently) needs to be run with 'sudo'.")
+
+
+def server_appvers():
+    """Checks for/gets server.app version, since we're forking between 4 and 5"""
     plist_path = '/Applications/Server.app/Contents/Info.plist'
     server_app_version = CFPreferencesCopyAppValue('CFBundleShortVersionString', plist_path)
     if not server_app_version:
@@ -27,17 +41,10 @@ def sanities():
     elif server_app_version < 4.1:
         print "Not Version 4.1(+) of Server.app"
         sys.exit(3)
+    elif server_app_version < '5.0':
+        return 'Four'
     else:
-        pref_path = '/Library/Server/Caching/Config/Config.plist'
-        try:
-            logidentitypref = CFPreferencesCopyAppValue('LogClientIdentity', pref_path)
-            if not logidentitypref == 'true':
-                print """This will be a very spare/boring report if you don't run this command:
-                      sudo serveradmin settings caching:LogClientIdentity = 1"""
-        except Exception as e:
-            raise e
-    if os.geteuid() != 0:
-        exit("For the final message send(only), this(currently) needs to be run with 'sudo'.")
+        return 'Five'
 
 # utility methods
 def normalize_gbs(mb_or_gb, val_to_operate_on):
@@ -93,7 +100,7 @@ def join_bzipped_logs(dir_of_logs):
     return unbzipped_logs
 
 
-def separate_range_build_list(dir_of_logs, unbzipped_logs, start_datetime, to_datetime):
+def separate_range_build_list(dir_of_logs, unbzipped_logs, start_datetime, to_datetime, server_vers):
     # todo - this is a bit big and nasty, but good enough for now
     """Opens current debug.log and un-bz'd logs and builds new list of loglines
        that fall within our reporting period. Returns two lists of strings: one for bandwidth,
@@ -123,46 +130,84 @@ def separate_range_build_list(dir_of_logs, unbzipped_logs, start_datetime, to_da
     if more_recent_svc_hup:
         for logline_str in our_range_logline_str_list:
             if logline_str[:23] > new_start_datetime:
-                if 'start:' in logline_str:
-                    bandwidth_lines_list.append(logline_str.split())
-                elif not any(x in logline_str for x in excludes):
-                    if any(x in logline_str for x in filetypes):
-                        filetype_lines_list.append(logline_str.split())
+                if server_vers == 'Five':
+                    if 'Served all' in logline_str:
+                        bandwidth_lines_list.append(logline_str.split())
+                    elif not any(x in logline_str for x in excludes):
+                        if any(x in logline_str for x in filetypes):
+                            filetype_lines_list.append(logline_str.split())
+                else:
+                    if 'start:' in logline_str:
+                        bandwidth_lines_list.append(logline_str.split())
+                    elif not any(x in logline_str for x in excludes):
+                        if any(x in logline_str for x in filetypes):
+                            filetype_lines_list.append(logline_str.split())
     else:
         new_start_datetime = start_datetime
         for logline_str in our_range_logline_str_list:
             if logline_str[:23] > start_datetime:
-                if 'start:' in logline_str:
-                    bandwidth_lines_list.append(logline_str.split())
-                elif not any(x in logline_str for x in excludes):
-                    if any(x in logline_str for x in filetypes):
-                        filetype_lines_list.append(logline_str.split())
+                if server_vers == 'Five':
+                    if 'Served all' in logline_str:
+                        bandwidth_lines_list.append(logline_str.split())
+                    elif not any(x in logline_str for x in excludes):
+                        if any(x in logline_str for x in filetypes):
+                            filetype_lines_list.append(logline_str.split())
+                else:
+                    if 'start:' in logline_str:
+                        bandwidth_lines_list.append(logline_str.split())
+                    elif not any(x in logline_str for x in excludes):
+                        if any(x in logline_str for x in filetypes):
+                            filetype_lines_list.append(logline_str.split())
     return bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime
 
 
-def parse_bandwidth(bandwidth_lines_list):
-    """ Use indexed fields in log lines to build list of bandwidth transferred, normalizes in GBs,
-        then parses deltas for data served from cache or streamed from apple/peers. Returns strings"""
-    logged_bytes_from_cache, logged_bytes_from_apple, logged_bytes_from_peers = [], [], []
-    for each in bandwidth_lines_list:
-        strip_parens = (each[15])[1:] # silly log line cleanup
-        logged_bytes_from_cache.append(normalize_gbs(each[6], each[5]))
-        logged_bytes_from_apple.append(normalize_gbs(each[16], strip_parens))
-        if not each[19] == '0':
-            logged_bytes_from_peers.append(normalize_gbs(each[20], each[19]))
-    daily_total_from_cache = alice(logged_bytes_from_cache)
-    daily_total_from_apple = alice(logged_bytes_from_apple)
-    # check for peers, set default
-    peer_amount = 'no peer servers detected'
-    if len(logged_bytes_from_peers) > 1:
-        if max(logged_bytes_from_peers) > 0.1:
-            daily_total_from_peers = alice(logged_bytes_from_peers)
-            daily_total_from_apple = daily_total_from_apple - daily_total_from_peers
+def parse_bandwidth(bandwidth_lines_list, server_vers):
+    """On Server4, uses indexed fields in log lines to build list of bandwidth
+       transferred, normalizes in GBs, then parses deltas for data served from
+       cache or streamed from apple/peers. On 5, builds up totals. Returns strings"""
+    if server_vers == 'Five':
+        #2015-09-22 10:23:03.737 #o13uUhWMyXek Served all 3.2 MB of 3.2 MB; 0 bytes from cache, 3.2 MB stored from Internet, 0 bytes from peers
+        daily_total_from_cache, daily_total_from_apple, peer_amount = 0.0, 0.0, 0.0
+        for each in bandwidth_lines_list:
+            if each[14] != '0':
+                if each[15] != 'GB':
+                    this_loops_fromapple = float(each[14]) / 1024
+                elif each[15] == 'GB':
+                    this_loops_fromapple = float(each[14])
+                daily_total_from_apple += this_loops_fromapple
+            elif each[19] != '0':
+                if each[20] != 'GB':
+                    peer_amount += float(each[19]) / 1024
+            elif each[10] != '0':
+                if each[11] != 'GB':
+                    daily_total_from_cache += float(each[10]) / 1024
+                elif each[11] == 'GB':
+                    daily_total_from_cache += float(each[10])
+        if peer_amount == 0.0:
+            peer_amount = 'no peer servers detected'
+        else:
             peer_amount = 'along with %s from peers' % gen_mb_or_gb(daily_total_from_peers)
+    else:
+        logged_bytes_from_cache, logged_bytes_from_apple, logged_bytes_from_peers = [], [], []
+        for each in bandwidth_lines_list:
+            strip_parens = (each[15])[1:] # silly log line cleanup
+            logged_bytes_from_cache.append(normalize_gbs(each[6], each[5]))
+            logged_bytes_from_apple.append(normalize_gbs(each[16], strip_parens))
+            if not each[19] == '0':
+                logged_bytes_from_peers.append(normalize_gbs(each[20], each[19]))
+        daily_total_from_cache = alice(logged_bytes_from_cache)
+        daily_total_from_apple = alice(logged_bytes_from_apple)
+        # check for peers, set default
+        peer_amount = 'no peer servers detected'
+        if len(logged_bytes_from_peers) > 1:
+            if max(logged_bytes_from_peers) > 0.1:
+                daily_total_from_peers = alice(logged_bytes_from_peers)
+                daily_total_from_apple = daily_total_from_apple - daily_total_from_peers
+                peer_amount = 'along with %s from peers' % gen_mb_or_gb(daily_total_from_peers)
     return daily_total_from_cache, daily_total_from_apple, peer_amount
 
 
-def get_device_stats(filetype_lines_list):
+def get_device_stats(filetype_lines_list, server_vers):
     """Parses out device stats, returns list motherlode"""
 # Example data as of July 2, 2015
 # ['2015-06-30', '12:31:04.095', '#eLTtl5KfMlrA', 'Request', 'from', '172.20.202.245:61917', '[itunesstored/1.0', 'iOS/8.3', 'model/iPhone7,1', 'build/12F70', '(6;', 'dt:107)]', 'for', 'http://a1254.phobos.apple.com/us/r1000/038/Purple7/v4/23/23/5e/23235e5d-1a12-f381-c001-60acfe6a56ff/zrh1611131113630130772.D2.pd.ipa']
@@ -170,6 +215,8 @@ def get_device_stats(filetype_lines_list):
 # ['2015-06-30', '14:09:00.230', '#sNn+egdFxN7m', 'Request', 'from', '172.18.81.204:60025', '[Software%20Update', '(unknown', 'version)', 'CFNetwork/596.6.3', 'Darwin/12.5.0', '(x86_64)', '(MacBookAir6%2C2)]', 'for', 'http://swcdn.apple.com/content/downloads/15/59/031-21808/qylh17vrdgnipjibo2avj3nbw8y2pzeito/Safari6.2.7MountainLion.pkg']
     iplog, oslog, modellog, ipas, epubs, pkgs, zips = [], [], [], [], [], [], []
     for filelog in filetype_lines_list:
+        if server_vers == 'Five':
+            filelog = filelog[2:]
         if filelog[5].startswith('172') or filelog[5].startswith('192') or filelog[5].startswith('10.'):
             strip_port = (filelog[5])[:-6]
             iplog.append(strip_port)
@@ -258,19 +305,22 @@ def main():
     # get to work
     if not options.devmode:
         sanities()
+        server_vers = server_appvers()
+    else:# setting server version to Five in devmode to intentionally test forked code path
+        server_vers = 'Five'
     dir_of_logs = options.logdir
     start_datetime = get_start(options.from_datetime)
     unbzipped_logs = join_bzipped_logs(dir_of_logs)
-    (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_range_build_list(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime)
+    (bandwidth_lines_list, filetype_lines_list, more_recent_svc_hup, new_start_datetime) = separate_range_build_list(dir_of_logs, unbzipped_logs, start_datetime, options.to_datetime, server_vers)
     if options.devmode:
         print '-' * 14, 'DEBUG', '-' * 14, '\nAll Args:', sys.argv[1:]
         print 'New(?) start_datetime:', new_start_datetime, '\n'
-    (daily_total_from_cache, daily_total_from_apple, peer_amount) = parse_bandwidth(bandwidth_lines_list)
-    (iplog, oslog, modellog, ipas, epubs, pkgs, zips) = get_device_stats(filetype_lines_list)
+    (daily_total_from_cache, daily_total_from_apple, peer_amount) = parse_bandwidth(bandwidth_lines_list, server_vers)
+    (iplog, oslog, modellog, ipas, epubs, pkgs, zips) = get_device_stats(filetype_lines_list, server_vers)
 
     #build message
     message = ["Download requests served from cache:", gen_mb_or_gb(daily_total_from_cache), '\n',
-               "Amount streamed from Apple (" + peer_amount + "):", gen_mb_or_gb(daily_total_from_apple), '\n',
+               "Amount streamed from Apple (" + str(peer_amount) + "):", gen_mb_or_gb(daily_total_from_apple), '\n',
                "(Potential) Net bandwidth saved:",
                gen_mb_or_gb(daily_total_from_cache - daily_total_from_apple), '\n', ""]
     if more_recent_svc_hup:

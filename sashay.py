@@ -186,7 +186,7 @@ def parse_bandwidth(bandwidth_lines_list, server_vers):
         if peer_amount == 0.0:
             peer_amount = 'no peer servers detected'
         else:
-            peer_amount = 'along with %s from peers' % gen_mb_or_gb(daily_total_from_peers)
+            peer_amount = 'along with %s from peers' % gen_mb_or_gb(peer_amount)
     else:
         logged_bytes_from_cache, logged_bytes_from_apple, logged_bytes_from_peers = [], [], []
         for each in bandwidth_lines_list:

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.example.sashay-weekly</string>
+	<string>com.github.macadmins.sashay-weekly</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/local/bin/sashay.py</string>
